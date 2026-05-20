@@ -13,6 +13,10 @@
     "start": "bun run server/src/index.ts",
     "prestart": "bun run build:bridge",
     "build:bridge": "bun run bridge/build.ts",
+    "build": "bun run build:bridge",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "verify": "bun run typecheck && bun run build && bun test",
     "dev": "bun run server/src/index.ts",
     "predev": "bun run build:bridge"
   },

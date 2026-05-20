@@ -77,7 +77,7 @@ export function pagesHandler(req: Request, url: URL): Response | null {
 }
 
 function windowsConnectScript(code: string, requestOrigin: string): Response {
-  const wsOrigin = requestOrigin.replace(/^http/, "ws");
+  const wsOrigin = requestOrigin.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
   const script = `$ErrorActionPreference = "Stop"
 $BaseUrl = "${requestOrigin}"
 $BridgeWsUrl = "${wsOrigin}/ws"
