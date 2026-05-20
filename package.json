@@ -8,6 +8,7 @@
     "typescript": "^5.0.0"
   },
   "description": "Connect Your Agent — temporary bridge for AI shell access",
+  "license": "MIT",
   "scripts": {
     "start": "bun run server/src/index.ts",
     "prestart": "bun run build:bridge",
