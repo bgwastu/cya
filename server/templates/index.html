@@ -179,10 +179,6 @@
         var remainder = String(seconds % 60).padStart(2, "0");
         $("expiry").textContent = seconds > 0 ? "Expires in " + minutes + ":" + remainder : "Expired";
       }
-        var minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
-        var remainder = String(seconds % 60).padStart(2, "0");
-        $("expiry").textContent = "Expires in " + minutes + ":" + remainder;
-      }
 
       async function poll() {
         var r = await fetch(BASE + "/api/session/" + CODE);
