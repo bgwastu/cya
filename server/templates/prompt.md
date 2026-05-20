@@ -36,68 +36,44 @@ Use those results to decide whether Bun, Node, Python, Git, Docker, or other too
 
 ## How to run commands
 
-Commands run over HTTP. **Prefer curl** if your harness supports it — `curl -s` gives you clean raw output and works reliably.
+**Prefer curl** — it gives clean raw output and works reliably. Use `web_fetch` only as fallback if your harness doesn't support curl.
 
 ### curl (preferred)
 
-Short commands (fits in a URL):
+Short commands:
 
 ```
 curl -s "{{run_url}}pwd"
-curl -s "{{run_url}}ls%20-la"
 ```
 
-Long commands or anything near URL length limits — use POST with JSON:
+Long commands or anything with quotes/special chars — use POST with base64 to avoid escaping hell:
 
 ```
-curl -s "{{run_url}}" -d '{"cmd":"find . -name \"*.ts\" -not -path \"./node_modules/*\" | xargs wc -l"}'
+curl -s "{{run_url}}" -d '{"cmd_b64":"ZWNobyBoZWxsbyB3b3JsZA=="}'
+```
+
+Add a timeout in seconds for long-running commands:
+
+```
+curl -s "{{run_url}}" -d '{"cmd":"sleep 20","timeout":5}'
 ```
 
 ### web_fetch (fallback)
 
-If your harness only supports `web_fetch`, try GET:
+GET with plain cmd or base64 to dodge URL encoding issues:
 
 ```
 {{run_url}}pwd
-{{run_url}}ls%20-la
+{{run_url}}?cmd_b64=ZWNobyBoZWxsbw==
 ```
 
-If web_fetch returns cached/stale responses, errors, or truncates output — web_fetch is not supported in your harness. Fall back to curl or tell the user web_fetch isn't working.
+If web_fetch returns stale/cached responses or errors — it's not supported. Fall back to curl.
 
 ### Session info
 
 ```
 curl -s "{{base_url}}/api/session/{{code}}"
 ```
-
-### WebSocket interactive CLI
-
-For streaming/interactive shell use, connect to `/ws` and join as a client:
-
-```json
-{"type":"join","session":"{{code}}","role":"client"}
-```
-
-Then send commands over the WebSocket:
-
-```json
-{"type":"command","cmd":"pwd"}
-```
-
-For terminal-like raw input (base64-encoded):
-
-```json
-{"type":"input","data":"cHdkXHI=","encoding":"base64"}
-```
-
-Resize the PTY or send signals:
-
-```json
-{"type":"resize","cols":120,"rows":40}
-{"type":"signal","name":"SIGINT"}
-```
-
-Output streams back as base64-encoded output messages.
 
 ## Safety policy
 

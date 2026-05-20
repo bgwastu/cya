@@ -1,4 +1,4 @@
-export type Role = "agent" | "client";
+export type Role = "agent";
 
 export interface MsgJoin {
   type: "join";

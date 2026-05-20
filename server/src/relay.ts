@@ -13,7 +13,6 @@ type PendingCommand = {
 interface SessionSlot {
   code: string;
   agent?: ServerWebSocket<unknown>;
-  client?: ServerWebSocket<unknown>;
   pendingHttp: Map<string, PendingCommand>;
   createdAt: number;
   lastActivity: number;
@@ -51,9 +50,7 @@ export function removeSlot(code: string, reason = "session_closed") {
   }
   slot.pendingHttp.clear();
 
-  slot.client?.send(JSON.stringify({ type: "bye", reason }));
   slot.agent?.send(JSON.stringify({ type: "bye", reason }));
-  slot.client?.close();
   slot.agent?.close();
 
   sessions.delete(code);
@@ -62,7 +59,7 @@ export function removeSlot(code: string, reason = "session_closed") {
 }
 
 export function handleJoin(ws: ServerWebSocket<unknown>, msg: Extract<ProtocolMsg, { type: "join" }>) {
-  if (!isSessionCode(msg.session) || (msg.role !== "agent" && msg.role !== "client")) {
+  if (!isSessionCode(msg.session) || msg.role !== "agent") {
     rejectJoin(ws, "Invalid join request");
     return;
   }
@@ -77,32 +74,19 @@ export function handleJoin(ws: ServerWebSocket<unknown>, msg: Extract<ProtocolMs
   ws.data = { session: msg.session, role: msg.role } as WsData;
   slot.lastActivity = Date.now();
 
-  if (msg.role === "agent") {
-    if (slot.agent) {
-      rejectJoin(ws, "Agent already connected");
-      audit(msg.session, "agent", "rejected_duplicate");
-      return;
-    }
-    slot.agent = ws;
-    updateSessionStatus(msg.session, "active");
-    if (msg.meta) {
-      setAgentMeta(msg.session, msg.meta.os, msg.meta.arch, msg.meta.host, msg.meta.user, msg.meta.cwd, msg.meta.shell, msg.meta.elevated);
-    }
-    audit(msg.session, "agent", "connected", describeMeta(msg.meta));
-    slot.client?.send(JSON.stringify({ type: "output", data: "[CYA] Agent connected\n" }));
+  if (slot.agent) {
+    rejectJoin(ws, "Agent already connected");
+    audit(msg.session, "agent", "rejected_duplicate");
+    return;
   }
-
-  if (msg.role === "client") {
-    if (slot.client) {
-      rejectJoin(ws, "Client already connected");
-      return;
-    }
-    slot.client = ws;
-    audit(msg.session, "client", "connected");
-    slot.agent?.send(JSON.stringify({ type: "output", data: "[CYA] Client connected\n" }));
+  slot.agent = ws;
+  updateSessionStatus(msg.session, "active");
+  if (msg.meta) {
+    setAgentMeta(msg.session, msg.meta.os, msg.meta.arch, msg.meta.host, msg.meta.user, msg.meta.cwd, msg.meta.shell, msg.meta.elevated);
   }
+  audit(msg.session, "agent", "connected", describeMeta(msg.meta));
 
-  ws.send(JSON.stringify({ type: "output", data: `[CYA] Joined session ${msg.session} as ${msg.role}\n` }));
+  ws.send(JSON.stringify({ type: "output", data: `[CYA] Joined session ${msg.session} as agent\n` }));
 }
 
 export function handleMessage(ws: ServerWebSocket<unknown>, raw: string) {
@@ -116,31 +100,6 @@ export function handleMessage(ws: ServerWebSocket<unknown>, raw: string) {
 
   const msg = parseMessage(raw);
   if (!msg) return;
-
-  if (msg.type === "command" && data.role === "client") {
-    if (!slot.agent) {
-      ws.send(JSON.stringify({ type: "error", message: "Agent not connected" }));
-      return;
-    }
-    slot.agent.send(raw);
-    audit(data.session, "client", "command", msg.cmd);
-    return;
-  }
-
-  if ((msg.type === "input" || msg.type === "resize" || msg.type === "signal") && data.role === "client") {
-    if (!slot.agent) {
-      ws.send(JSON.stringify({ type: "error", message: "Agent not connected" }));
-      return;
-    }
-    slot.agent.send(raw);
-    audit(data.session, "client", msg.type);
-    return;
-  }
-
-  if (msg.type === "output" && data.role === "agent") {
-    slot.client?.send(raw);
-    return;
-  }
 
   if (msg.type === "command_result" && data.role === "agent") {
     const pending = slot.pendingHttp.get(msg.id);
@@ -166,28 +125,23 @@ export function handleDisconnect(ws: ServerWebSocket<unknown>) {
   if (data.role === "agent") {
     slot.agent = undefined;
     audit(data.session, "agent", "disconnected");
-    slot.client?.send(JSON.stringify({ type: "output", data: "[CYA] Agent disconnected\n" }));
     updateSessionStatus(data.session, "waiting");
-  }
-
-  if (data.role === "client") {
-    slot.client = undefined;
-    audit(data.session, "client", "disconnected");
   }
 }
 
-export function executeHttpCommand(code: string, cmd: string): Promise<CommandResult> {
+export function executeHttpCommand(code: string, cmd: string, timeoutMs?: number): Promise<CommandResult> {
   const slot = sessions.get(code);
   if (!slot) return Promise.reject(new Error("Session not found"));
   if (!slot.agent) return Promise.reject(new Error("Agent not connected"));
 
   const id = crypto.randomUUID();
+  const timeout = Math.max(1000, Math.min(timeoutMs ?? 30_000, 300_000)); // 1s–300s
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       slot.pendingHttp.delete(id);
-      reject(new Error("Command timed out"));
-    }, 30_000);
+      reject(new Error(`Command timed out after ${Math.round(timeout / 1000)}s`));
+    }, timeout);
 
     slot.pendingHttp.set(id, { resolve, reject, timer });
     slot.agent!.send(JSON.stringify({ type: "command", cmd, id }));

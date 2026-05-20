@@ -68,27 +68,42 @@ async function handleCommand(req: Request, url: URL, code: string, status: strin
   if (!isSessionCode(code)) return json({ error: "Invalid session code" }, 400);
   if (status !== "active") return json({ error: "Agent not connected" }, 409);
 
-  const cmd = await getCommand(req, url);
-  if (!cmd) return json({ error: "Missing cmd. Use ?cmd=... for GET or JSON {\"cmd\":\"...\"}." }, 400);
+  const parsed = await getCommand(req, url);
+  if (!parsed) return json({ error: "Missing cmd. Use ?cmd=... for GET or JSON {\"cmd\":\"...\"} or {\"cmd_b64\":\"...\"}." }, 400);
 
-  audit(code, "http", "command", cmd);
+  audit(code, "http", "command", parsed.cmd);
   try {
-    const result = await executeHttpCommand(code, cmd);
+    const result = await executeHttpCommand(code, parsed.cmd, parsed.timeout);
     return json(result);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Command failed" }, 500);
   }
 }
 
-async function getCommand(req: Request, url: URL): Promise<string | null> {
+async function getCommand(req: Request, url: URL): Promise<{ cmd: string; timeout?: number } | null> {
+  // GET: plain cmd or base64-encoded cmd_b64
   const queryCmd = url.searchParams.get("cmd") || url.searchParams.get("command");
-  if (queryCmd?.trim()) return queryCmd;
+  const queryB64 = url.searchParams.get("cmd_b64");
+  if (queryB64) {
+    const decoded = Buffer.from(queryB64, "base64").toString("utf8").trim();
+    if (decoded) return { cmd: decoded };
+  }
+  if (queryCmd?.trim()) return { cmd: queryCmd };
+
+  // POST: JSON body with cmd, cmd_b64, and optional timeout
   if (req.method !== "POST") return null;
 
   try {
-    const body = await req.json() as { cmd?: unknown; command?: unknown };
-    const cmd = body.cmd || body.command;
-    return typeof cmd === "string" && cmd.trim() ? cmd : null;
+    const body = await req.json() as { cmd?: unknown; command?: unknown; cmd_b64?: unknown; timeout?: unknown };
+    let cmd = typeof body.cmd === "string" && body.cmd.trim() ? body.cmd : null;
+    cmd ??= typeof body.command === "string" && body.command.trim() ? body.command : null;
+    if (!cmd && typeof body.cmd_b64 === "string") {
+      const decoded = Buffer.from(body.cmd_b64, "base64").toString("utf8").trim();
+      if (decoded) cmd = decoded;
+    }
+    if (!cmd) return null;
+    const timeout = typeof body.timeout === "number" && body.timeout > 0 ? body.timeout : undefined;
+    return { cmd, timeout };
   } catch {
     return null;
   }
